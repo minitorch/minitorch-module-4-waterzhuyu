@@ -41,8 +41,7 @@ class Conv2d(minitorch.Module):
         self.bias = RParam(out_channels, 1, 1)
 
     def forward(self, input):
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        return minitorch.conv2d(input, self.weights.value) + self.bias.value
 
 
 class Network(minitorch.Module):
@@ -67,12 +66,29 @@ class Network(minitorch.Module):
         self.mid = None
         self.out = None
 
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        self.conv1 = Conv2d(1, 4, 3, 3)
+        self.conv2 = Conv2d(4, 8, 3, 3)
+        self.linear1 = Linear(392, 64)
+        self.linear2 = Linear(64, 4)
 
     def forward(self, x):
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        batch, _, height, width = x.shape
+        assert height == H and width == W
+
+        self.mid = self.conv1.forward(x)
+
+        conv_out1 = self.mid.relu()
+        conv_out2 = self.conv2.forward(conv_out1).relu()
+        pooled = minitorch.nn.avgpool2d(conv_out2, (4, 4))
+        assert pooled.shape == (batch, 8, 7, 7)
+        flatten = pooled.view(batch, 392)
+        linear1_out = self.linear1.forward(flatten)
+        droped = minitorch.nn.dropout(linear1_out.relu(), 0.25, ignore=not self.training)
+        linear2_out = self.linear2.forward(droped)
+        output = minitorch.nn.logsoftmax(linear2_out, 1)
+        assert len([ele for ele in output._tensor._storage if ele != ele]) == 0
+
+        return output
 
 
 def make_mnist(start, stop):

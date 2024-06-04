@@ -151,6 +151,7 @@ def tensor_map(
         Tensor map function.
     """
 
+    @njit(parallel=True)
     def _map(
         out: Storage,
         out_shape: Shape,
@@ -159,9 +160,28 @@ def tensor_map(
         in_shape: Shape,
         in_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        assert len(out_shape) < MAX_DIMS and len(in_shape) < MAX_DIMS
 
-    return njit(parallel=True)(_map)  # type: ignore
+        # check the length of the iterable then starting iterate...
+        if len(out_strides) == len(in_strides) and (out_strides == in_strides).all() \
+                and len(out_shape) == len(in_shape) and (out_shape == in_shape).all():  # When `out` and `in` are stride-aligned
+
+            for i in prange(out.size):
+                out[i] = fn(in_storage[i])
+            return
+
+        for i in prange(out.size):
+            # Define `out_index` and `in_index` in the loop in case of data race.
+            out_index: Index = np.zeros_like(out_shape, dtype=np.int32)  # how to create index by using numpy buffers?
+            in_index: Index = np.zeros_like(in_shape, dtype=np.int32)
+
+            to_index(i, out_shape, out_index)
+            broadcast_index(out_index, out_shape, in_shape, in_index)
+            in_pos = index_to_position(in_index, in_strides)
+            out_pos = index_to_position(out_index, out_strides)
+            out[out_pos] = fn(in_storage[in_pos])
+
+    return _map  # type: ignore
 
 
 def tensor_zip(
@@ -186,6 +206,7 @@ def tensor_zip(
         Tensor zip function.
     """
 
+    @njit(parallel=True)
     def _zip(
         out: Storage,
         out_shape: Shape,
@@ -197,9 +218,37 @@ def tensor_zip(
         b_shape: Shape,
         b_strides: Strides,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        assert len(out_shape) < MAX_DIMS and len(a_shape) < MAX_DIMS and len(b_shape) < MAX_DIMS
 
-    return njit(parallel=True)(_zip)  # type: ignore
+        if len(out_strides) == len(a_strides) == len(b_strides) \
+            and (out_strides == a_strides).all() and (out_strides == b_strides).all() \
+                and len(out_shape) == len(a_shape) == len(b_shape) and \
+                (out_shape == a_shape).all() and (out_shape == b_shape).all():
+
+            for i in prange(out.size):
+                out[i] = fn(a_storage[i], b_storage[i])
+            return
+
+        # ATTN: This will make data race..., make loop just reference its local variable.
+        # out_index: Index = np.zeros_like(out_shape, dtype=np.int32)
+        # a_index: Index = np.zeros_like(a_shape, dtype=np.int32)
+        # b_index: Index = np.zeros_like(b_shape, dtype=np.int32)
+
+        for i in prange(out.size):
+            out_index: Index = np.zeros_like(out_shape, dtype=np.int32)
+            a_index: Index = np.zeros_like(a_shape, dtype=np.int32)
+            b_index: Index = np.zeros_like(b_shape, dtype=np.int32)
+            to_index(i, out_shape, out_index)
+            broadcast_index(out_index, out_shape, a_shape, a_index)
+            broadcast_index(out_index, out_shape, b_shape, b_index)
+
+            out_pos: int = index_to_position(out_index, out_strides)
+            a_pos: int = index_to_position(a_index, a_strides)
+            b_pos: int = index_to_position(b_index, b_strides)
+
+            out[out_pos] = fn(a_storage[a_pos], b_storage[b_pos])
+
+    return _zip  # type: ignore
 
 
 def tensor_reduce(
@@ -221,6 +270,7 @@ def tensor_reduce(
         Tensor reduce function
     """
 
+    @njit(parallel=True)
     def _reduce(
         out: Storage,
         out_shape: Shape,
@@ -230,9 +280,25 @@ def tensor_reduce(
         a_strides: Strides,
         reduce_dim: int,
     ) -> None:
-        raise NotImplementedError("Need to include this file from past assignment.")
+        assert len(out_shape) < MAX_DIMS and len(a_shape) < MAX_DIMS
 
-    return njit(parallel=True)(_reduce)  # type: ignore
+        for i in prange(out.size):
+            out_index: Index = np.zeros_like(out_shape)
+            a_index: Index = np.zeros_like(a_shape)
+
+            to_index(i, out_shape, out_index)
+            to_index(i, out_shape, a_index)
+
+            a_index[reduce_dim] = 0
+            reduce_res: np.float64 = a_storage[index_to_position(a_index, a_strides)]
+
+            for j in range(1, a_shape[reduce_dim]):
+                a_index[reduce_dim] = j
+                reduce_res = fn(reduce_res, a_storage[index_to_position(a_index, a_strides)])
+
+            out[index_to_position(out_index, out_strides)] = reduce_res
+
+    return _reduce  # type: ignore
 
 
 def _tensor_matrix_multiply(
@@ -276,10 +342,25 @@ def _tensor_matrix_multiply(
     Returns:
         None : Fills in `out`
     """
+    assert a_shape[-1] == b_shape[-2]
+
     a_batch_stride = a_strides[0] if a_shape[0] > 1 else 0
     b_batch_stride = b_strides[0] if b_shape[0] > 1 else 0
 
-    raise NotImplementedError("Need to include this file from past assignment.")
+    # WHY 3 dimension of out_shape? : Cause 2-dim tensor will reshape to (1, *shape)
+    for i in prange(out_shape[0]):  # dim of batch
+        for j in range(out_shape[1]):  # diagnostics check suggests using serial loop
+            for k in range(out_shape[2]):
+                a_inner = i * a_batch_stride + j * a_strides[1]
+                b_inner = i * b_batch_stride + k * b_strides[2]
+
+                num = 0.
+                for _ in range(a_shape[-1]):  # a_shape[-1] == b_shape[-2]
+                    num += a_storage[a_inner] * b_storage[b_inner]
+                    a_inner += a_strides[2]
+                    b_inner += b_strides[1]
+                out_pos = np.array(i * out_strides[0] + j * out_strides[1] + k * out_strides[2])
+                out[out_pos] = num
 
 
 tensor_matrix_multiply = njit(parallel=True, fastmath=True)(_tensor_matrix_multiply)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import random
-from typing import Iterable, Optional, Sequence, Tuple, Union
+from itertools import zip_longest
+from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numba
 import numpy as np
@@ -43,7 +44,12 @@ def index_to_position(index: Index, strides: Strides) -> int:
         Position in storage
     """
 
-    raise NotImplementedError("Need to include this file from past assignment.")
+    # return sum([i * j for i, j in zip(index, strides)])
+    res = 0
+    for i in range(len(strides)):
+        res += index[i] * strides[i]
+
+    return res
 
 
 def to_index(ordinal: int, shape: Shape, out_index: OutIndex) -> None:
@@ -59,7 +65,10 @@ def to_index(ordinal: int, shape: Shape, out_index: OutIndex) -> None:
         out_index : return index corresponding to position.
 
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    ordinal += 0  # fix "unsupported error"
+    for i in range(len(shape) - 1, -1, -1):
+        out_index[i] = ordinal % shape[i]
+        ordinal = ordinal // shape[i]
 
 
 def broadcast_index(
@@ -81,7 +90,18 @@ def broadcast_index(
     Returns:
         None
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    # Can't use `reversed()`
+    for idx, (i, j) in enumerate(zip(shape[::-1], big_shape[::-1])):
+        if i == j:
+            out_index[len(shape) - 1 - idx] = big_index[len(big_shape) - 1 - idx]
+            # out_index[idx] = big_index[idx]
+            continue
+
+        out_index[len(out_index) - 1 - idx] = 0  # this dimension is broadcasted
+        # out_index[idx] = 0
+
+    # out_index = out_index[len(out_index) - len(shape) : ]  # remove additional dimensions
+    out_index = out_index[::-1]  # trancate the spare trailing index or not...
 
 
 def shape_broadcast(shape1: UserShape, shape2: UserShape) -> UserShape:
@@ -98,7 +118,18 @@ def shape_broadcast(shape1: UserShape, shape2: UserShape) -> UserShape:
     Raises:
         IndexingError : if cannot broadcast
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    out_shape: List[int] = []
+    for i, j in zip_longest(reversed(shape1), reversed(shape2), fillvalue=1):
+        if i == j or i == 1:
+            out_shape.append(j)
+        elif j == 1:
+            out_shape.append(i)
+        else:
+            raise IndexingError(
+                f"operands could not broadcast together with shape {shape1} {shape2}"
+            )
+
+    return tuple(reversed(out_shape))  # tuple
 
 
 def strides_from_shape(shape: UserShape) -> UserStrides:
@@ -145,8 +176,8 @@ class TensorData:
         assert len(self._storage) == self.size
 
     def to_cuda_(self) -> None:  # pragma: no cover
-        if not numba.cuda.is_cuda_array(self._storage):
-            self._storage = numba.cuda.to_device(self._storage)
+        # if not numba.cuda.is_cuda_array(self._storage):
+        self._storage = numba.cuda.to_device(self._storage)
 
     def is_contiguous(self) -> bool:
         """
@@ -171,11 +202,6 @@ class TensorData:
             aindex: Index = array([index])
         if isinstance(index, tuple):
             aindex = array(index)
-
-        # Pretend 0-dim shape is 1-dim shape of singleton
-        shape = self.shape
-        if len(shape) == 0 and len(aindex) != 0:
-            shape = (1,)
 
         # Check for errors
         if aindex.shape[0] != len(self.shape):
@@ -214,7 +240,7 @@ class TensorData:
         Permute the dimensions of the tensor.
 
         Args:
-            *order: a permutation of the dimensions
+            order (list): a permutation of the dimensions
 
         Returns:
             New `TensorData` with the same storage and a new dimension order.
@@ -223,7 +249,13 @@ class TensorData:
             range(len(self.shape))
         ), f"Must give a position to each dimension. Shape: {self.shape} Order: {order}"
 
-        raise NotImplementedError("Need to include this file from past assignment.")
+        # the key is to find the permuted stride
+        # using same position in storage.
+        return TensorData(
+            self._storage,
+            tuple([self.shape[i] for i in order]),
+            tuple([self.strides[i] for i in order]),
+        )
 
     def to_string(self) -> str:
         s = ""

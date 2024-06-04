@@ -6,7 +6,6 @@ from numba import njit, prange
 from .autodiff import Context
 from .tensor import Tensor
 from .tensor_data import (
-    MAX_DIMS,
     Index,
     Shape,
     Strides,
@@ -80,8 +79,57 @@ def _tensor_conv1d(
     s1 = input_strides
     s2 = weight_strides
 
-    # TODO: Implement for Task 4.1.
-    raise NotImplementedError("Need to implement for Task 4.1")
+    # how to get unrolled result?
+
+    # What's the shape of unrolled?
+    # A: (batch, width, kw * in_channels)
+
+    # Can't using tensor() in nopython mode.
+    # unrolled = tensor([[[input._tensor[index_to_position([b, c, i + s], input_strides)] if i + s < width else 0 for s in range(kw) for c in range(in_channels)]
+    # for i in range(width)] for b in range(batch)])
+
+    # (batch, width, kw * in_channels) @ (kw * in_channels_, out_channels) -> (batch, width, out_channels) --permute->
+    # out = (unrolled @ weight.view(kw * in_channels_, out_channels_)).permute(0, 2, 1)
+    # for b in prange(batch):
+    #     for c in prange(out_channels):
+    #         for w in prange(out_width):
+    #             out_ordinal = index_to_position([b, c, w], out_strides)
+
+    #             res = 0.
+    #             for c_in in range(in_channels):
+    #                 for i in range(kw):
+    #                     if w + i < width:
+    #                         res += input._tensor[index_to_position([b, c_in, w + i], s1)] * weight._tensor[index_to_position([c, c_in, i], s2)]
+
+    #             out[out_ordinal] = res
+    for i in prange(out_size):
+        in_index: Index = np.zeros_like(input_shape, dtype=np.int32)
+        out_index: Index = np.zeros_like(out_shape, dtype=np.int32)
+
+        to_index(i, out_shape, out_index)
+        out_pos = index_to_position(out_index, out_strides)
+
+        in_index[0] = out_index[0]  # batch dim
+
+        start = out_index[-1]  # width dim
+        res = 0.
+        for c_in in range(in_channels):
+            in_index[1] = c_in  # channel dim
+            in_index[-1] = start
+
+            in_pos_start = index_to_position(in_index, s1)
+            for w in range(kw):
+                w_reverse = w if not reverse else -w
+                if 0 <= w_reverse + start < width:
+                    weight_pos = (
+                        out_index[1] * s2[0]  # out_channel dim
+                        + c_in * s2[1]  # in_channel dim
+                        + w * s2[2]
+                    )
+
+                    res += weight[weight_pos] * input[in_pos_start + w_reverse * s1[2]]
+
+        out[out_pos] = res
 
 
 tensor_conv1d = njit(parallel=True)(_tensor_conv1d)
@@ -206,8 +254,35 @@ def _tensor_conv2d(
     s10, s11, s12, s13 = s1[0], s1[1], s1[2], s1[3]
     s20, s21, s22, s23 = s2[0], s2[1], s2[2], s2[3]
 
-    # TODO: Implement for Task 4.2.
-    raise NotImplementedError("Need to implement for Task 4.2")
+    for i in prange(out_size):
+        input_index: Index = np.zeros_like(input_shape, dtype=np.int32)
+        out_index: Index = np.zeros_like(out_shape, dtype=np.int32)
+
+        to_index(i, out_shape, out_index)
+        out_pos = index_to_position(out_index, out_strides)
+
+        input_index[0] = out_index[0]  # batch dim
+
+        res = 0.
+        height_start = out_index[-2]
+        width_start = out_index[-1]
+
+        for c_in in range(in_channels):
+            input_index[-3] = c_in
+            input_index[-2] = height_start
+            input_index[-1] = width_start
+
+            in_pos_start = index_to_position(input_index, s1)
+
+            for h in range(kh):
+                h_reverse = h if not reverse else -h
+                for w in range(kw):
+                    w_reverse = w if not reverse else -w
+                    if 0 <= height_start + h_reverse < height and 0 <= width_start + w_reverse < width:
+                        weight_pos = out_index[1] * s20 + c_in * s21 + h * s22 + w * s23
+                        res += weight[weight_pos] * input[in_pos_start + h_reverse * s12 + w_reverse * s13]
+
+        out[out_pos] = res
 
 
 tensor_conv2d = njit(parallel=True, fastmath=True)(_tensor_conv2d)
