@@ -2,6 +2,7 @@ import random
 from typing import Callable, Dict, Iterable, List, Tuple
 
 import numba
+import numba.cuda
 import pytest
 from hypothesis import given, settings
 from hypothesis.strategies import DataObject, data, integers, lists, permutations
@@ -9,8 +10,13 @@ from hypothesis.strategies import DataObject, data, integers, lists, permutation
 import minitorch
 from minitorch import MathTestVariable, Tensor, TensorBackend, grad_check
 
-from .strategies import assert_close, small_floats
-from .tensor_strategies import assert_close_tensor, shaped_tensors, tensors
+DEBUG = False
+if DEBUG:
+    from strategies import assert_close, small_floats
+    from tensor_strategies import assert_close_tensor, shaped_tensors, tensors
+else:
+    from .strategies import assert_close, small_floats
+    from .tensor_strategies import assert_close_tensor, shaped_tensors, tensors
 
 one_arg, two_arg, red_arg = MathTestVariable._comp_testing()
 
@@ -342,7 +348,7 @@ def test_permute(backend: str, data: DataObject) -> None:
 def test_mm2() -> None:
     a = minitorch.rand((2, 3), backend=FastTensorBackend)
     b = minitorch.rand((3, 4), backend=FastTensorBackend)
-    c = a @ b
+    c = a @ b  # a and b will reshape to (1, *shape)
 
     c2 = (a.view(2, 3, 1) * b.view(1, 3, 4)).sum(1).view(2, 4)
 
@@ -377,3 +383,23 @@ def test_bmm(backend: str, data: DataObject) -> None:
         .view(D, A, C)
     )
     assert_close_tensor(c, c2)
+
+
+if __name__ == "__main__":
+    print(numba.cuda.is_available())
+
+    size = 33
+    x1 = [[random.random() for i in range(size)] for j in range(size)]
+    y1 = [[random.random() for i in range(size)] for j in range(size)]
+    z = minitorch.tensor(x1, backend=shared["fast"]) @ minitorch.tensor(
+        y1, backend=shared["fast"]
+    )
+
+    x = minitorch.tensor(x1, backend=shared["cuda"])
+    y = minitorch.tensor(y1, backend=shared["cuda"])
+    z2 = x @ y
+
+    for i in range(size):
+        for j in range(size):
+            assert_close(z[i, j], z2[i, j])
+            print(i, j, True)

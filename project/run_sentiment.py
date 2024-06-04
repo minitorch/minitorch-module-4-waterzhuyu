@@ -1,4 +1,5 @@
 import random
+from typing import List
 
 import embeddings
 
@@ -33,9 +34,9 @@ class Conv1d(minitorch.Module):
         self.weights = RParam(out_channels, in_channels, kernel_width)
         self.bias = RParam(1, out_channels, 1)
 
-    def forward(self, input):
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+    def forward(self, input: minitorch.Tensor) -> minitorch.Tensor:
+        # (batch, in_channels, width)
+        return minitorch.conv1d(input, self.weights.value) + self.bias.value
 
 
 class CNNSentimentKim(minitorch.Module):
@@ -61,15 +62,37 @@ class CNNSentimentKim(minitorch.Module):
     ):
         super().__init__()
         self.feature_map_size = feature_map_size
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        self.dropout = dropout
 
-    def forward(self, embeddings):
+        self.convs: List[minitorch.Module] = []
+        for i, filter_size in enumerate(filter_sizes):
+            conv = Conv1d(in_channels=embedding_size, out_channels=feature_map_size, kernel_width=filter_size)
+            setattr(self, f"convs_{i}", conv)
+            self.convs.append(conv)
+
+        self.linear = Linear(in_size=feature_map_size, out_size=1)
+
+    def forward(self, embeddings: minitorch.Tensor):
         """
         embeddings tensor: [batch x sentence length x embedding dim]
         """
-        # TODO: Implement for Task 4.5.
-        raise NotImplementedError("Need to implement for Task 4.5")
+        batch, max_len, num_emb = embeddings.shape
+
+        input = embeddings.permute(0, 2, 1)
+        # (batch, feature_map_size, max_len)
+        conv_outs = [conv.forward(input).relu() for conv in self.convs]
+        pool_outs = [
+            minitorch.nn.maxpool2d(conv_out.view(batch, 1, self.feature_map_size, max_len), (1, max_len)
+                                   ).view(batch, self.feature_map_size) for conv_out in conv_outs
+        ]
+
+        pool_out = pool_outs[0]
+        for i in range(1, len(pool_outs)):
+            pool_out += pool_outs[i]
+
+        droped = minitorch.nn.dropout(pool_out, self.dropout)
+
+        return self.linear.forward(droped).sigmoid().view(batch)
 
 
 # Evaluation helper methods

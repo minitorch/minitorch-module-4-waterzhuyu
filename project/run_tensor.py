@@ -20,8 +20,10 @@ class Network(minitorch.Module):
         self.layer2 = Linear(hidden_layers, hidden_layers)
         self.layer3 = Linear(hidden_layers, 1)
 
-    def forward(self, x):
-        raise NotImplementedError("Need to include this file from past assignment.")
+    def forward(self, x: minitorch.Tensor):
+        middle = self.layer1.forward(x).relu()
+        end = self.layer2.forward(middle).relu()
+        return self.layer3.forward(end).sigmoid()
 
 
 class Linear(minitorch.Module):
@@ -31,8 +33,28 @@ class Linear(minitorch.Module):
         self.bias = RParam(out_size)
         self.out_size = out_size
 
-    def forward(self, x):
-        raise NotImplementedError("Need to include this file from past assignment.")
+    def forward(self, x: minitorch.Tensor) -> minitorch.Tensor:
+        assert x.shape[-1] == self.weights.value.shape[0]  # x.shape[-1] == in_size
+        # This won't backprop the gradient, we don't use the tensor operation...
+        # out = [[] for _ in range(x.shape[0])]  # Number of points
+        # for i in range(x.shape[0]):
+        #     for j in range(self.out_size):
+        #         out[i].append(
+        #             sum(
+        #                 [
+        #                     x[(i, k)] * self.weights.value[(k, j)]
+        #                     for k in range(x.shape[1])
+        #                 ]
+        #             )
+        #             + self.bias.value[j]
+        #         )
+
+        # return minitorch.tensor(out)
+        middle = self.weights.value.view(1, *self.weights.value.shape) * x.view(
+            *x.shape, 1
+        )
+        a = middle.sum(dim=1).contiguous().view(x.shape[0], self.out_size)
+        return a + self.bias.value.view(1, self.out_size)
 
 
 def default_log_fn(epoch, total_loss, correct, losses):
@@ -86,8 +108,8 @@ class TensorTrain:
 
 
 if __name__ == "__main__":
-    PTS = 50
-    HIDDEN = 2
+    PTS = 150
+    HIDDEN = 4
     RATE = 0.5
-    data = minitorch.datasets["Simple"](PTS)
-    TensorTrain(HIDDEN).train(data, RATE)
+    data = minitorch.datasets["Diag"](PTS)
+    TensorTrain(HIDDEN).train(data, RATE, max_epochs=500)

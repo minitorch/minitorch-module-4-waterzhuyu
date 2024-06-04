@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 from typing_extensions import Protocol
 
@@ -22,7 +22,16 @@ def central_difference(f: Any, *vals: Any, arg: int = 0, epsilon: float = 1e-6) 
     Returns:
         An approximation of $f'_i(x_0, \ldots, x_{n-1})$
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    assert arg < len(vals)
+    vals1 = list(vals)  # vals is seen as a Tuple by default
+    vals1[arg] += epsilon
+    val1: float = f(*vals1)
+
+    vals2 = list(vals)
+    vals2[arg] -= epsilon
+    val2: float = f(*vals2)
+
+    return (val1 - val2) / (2 * epsilon)
 
 
 variable_count = 1
@@ -60,7 +69,24 @@ def topological_sort(variable: Variable) -> Iterable[Variable]:
     Returns:
         Non-constant Variables in topological order starting from the right.
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    visited: List[int] = []
+    reverse_order: List[Variable] = []
+
+    def _dfs(scalar: Variable) -> None:
+        visited.append(scalar.unique_id)
+        if (
+            not scalar.is_constant()
+        ):  # assert scalar.history is not None, so scalar.parents is not None, aka pruning
+            for var in scalar.parents:
+                if var.unique_id not in visited:
+                    _dfs(var)
+
+        reverse_order.append(scalar)
+
+    _dfs(variable)
+    reverse_order.reverse()  # return None
+
+    return reverse_order
 
 
 def backpropagate(variable: Variable, deriv: Any) -> None:
@@ -74,7 +100,23 @@ def backpropagate(variable: Variable, deriv: Any) -> None:
 
     No return. Should write to its results to the derivative values of each leaf through `accumulate_derivative`.
     """
-    raise NotImplementedError("Need to include this file from past assignment.")
+    topo: Iterable[Variable] = topological_sort(variable)
+    intermediate: Dict[int, float] = {
+        var.unique_id: 0 for var in topo
+    }  # The key of dict should be immutable, so we can't use Scalar.
+    intermediate[variable.unique_id] = deriv
+
+    for var in topo:
+        if var.is_leaf():
+            var.accumulate_derivative(intermediate[var.unique_id])
+            continue
+
+        if var.is_constant():  # chain_rule() must called on a non-constant Variable
+            continue
+
+        ls = var.chain_rule(intermediate[var.unique_id])
+        for var_in, deriv in ls:
+            intermediate[var_in.unique_id] += deriv  # ls: Tuple[Variable, float]
 
 
 @dataclass
